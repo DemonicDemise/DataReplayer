@@ -58,6 +58,7 @@ public class SettingsService : ISettingsService
         settings.TrackersWhiteList = input.TrackersWhiteList;
         settings.SubscribedTopics = input.SubscribedTopics;
         settings.IsRecordingEnabled = input.IsRecordingEnabled;
+        settings.TrackerIdTopicSegmentIndex = input.TrackerIdTopicSegmentIndex;
         settings.MqttBrokerHost = input.MqttBrokerHost;
         settings.MqttBrokerPort = input.MqttBrokerPort;
         settings.MqttUsername = input.MqttUsername;

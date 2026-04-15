@@ -11,7 +11,7 @@ public class ReplaySessionCommand
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
     public double SpeedMultiplier { get; set; } = 1.0;
-    public string TimestampJsonPath { get; set; } = "timestamp";
+    public string TimestampJsonPath { get; set; } = ReplayService.TimestampPath;
     public List<string>? TrackerFilter { get; set; }
 }
 
@@ -33,6 +33,9 @@ public class ReplayProgressInfo
 
 public class ReplayService : BackgroundService, IReplayService
 {
+    /// <summary>Fixed JSON path to the epoch timestamp field inside the MQTT payload.</summary>
+    public const string TimestampPath = "$.message.b0.ts";
+
     private readonly IServiceProvider _sp;
     private readonly ILogger<ReplayService> _logger;
     private CancellationTokenSource? _sessionCts;
@@ -135,21 +138,45 @@ public class ReplayService : BackgroundService, IReplayService
             // Adjust timestamp in payload
             var finalPayload = AdjustTimestamp(evt.Payload, cmd.TimestampJsonPath, DateTime.UtcNow);
 
+            _logger.LogDebug(
+                "[Replay] Preparing to publish:\n" +
+                "  Topic   : {Topic}\n" +
+                "  Original: {Original}\n" +
+                "  Modified: {Modified}",
+                evt.Endpoint, evt.Payload, finalPayload);
+
             // Publish to MQTT
-            if (_mqttClient is { IsConnected: true })
+            if (_mqttClient is null)
+            {
+                _logger.LogWarning("[Replay] MQTT client is null — skipping event {Sent}/{Total} on topic {Topic}",
+                    Progress.Sent + 1, Progress.Total, evt.Endpoint);
+            }
+            else if (!_mqttClient.IsConnected)
+            {
+                _logger.LogWarning("[Replay] MQTT client is NOT connected — skipping event {Sent}/{Total} on topic {Topic}",
+                    Progress.Sent + 1, Progress.Total, evt.Endpoint);
+            }
+            else
             {
                 var msg = new MqttApplicationMessageBuilder()
                     .WithTopic(evt.Endpoint)
                     .WithPayload(finalPayload)
                     .Build();
+
+                _logger.LogInformation(
+                    "[Replay] Publishing event {Sent}/{Total}:\n" +
+                    "  Topic  : {Topic}\n" +
+                    "  Payload: {Payload}",
+                    Progress.Sent + 1, Progress.Total, evt.Endpoint, finalPayload);
+
                 await _mqttClient.PublishAsync(msg, sessionToken);
+
+                _logger.LogInformation("[Replay] Published OK → {Topic}", evt.Endpoint);
             }
 
             Progress.Sent++;
             Progress.CurrentTopic = evt.Endpoint;
             Progress.CurrentEventTime = evt.ReceivedAt;
-
-            _logger.LogDebug("Replayed to {Topic} (event {Sent}/{Total})", evt.Endpoint, Progress.Sent, Progress.Total);
         }
 
         _logger.LogInformation("Replay session completed. {Sent}/{Total} events sent.", Progress.Sent, Progress.Total);
@@ -176,22 +203,84 @@ public class ReplayService : BackgroundService, IReplayService
         catch (Exception ex) { _logger.LogError(ex, "Replay: failed to connect to MQTT broker"); }
     }
 
-    private static string AdjustTimestamp(string payload, string jsonPath, DateTime newValue)
+    private string AdjustTimestamp(string payload, string jsonPath, DateTime newValue)
     {
+        if (string.IsNullOrWhiteSpace(jsonPath))
+        {
+            _logger.LogDebug("[Replay] TimestampJsonPath is empty — payload sent as-is");
+            return payload;
+        }
+        
         try
         {
             var node = JsonNode.Parse(payload);
-            if (node is not JsonObject obj) return payload;
+            if (node == null)
+            {
+                _logger.LogWarning("[Replay] Failed to parse payload as JSON — sending original. Payload: {Payload}", payload);
+                return payload;
+            }
 
-            // Supports simple "$.field" or just "field"
-            var key = jsonPath.TrimStart('$').TrimStart('.');
-            if (obj.ContainsKey(key))
-                obj[key] = newValue.ToString("O");
+            // e.g. "$.message.b0.ts" -> ["message", "b0", "ts"]
+            var parts = jsonPath.Replace("$", "").Split('.', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) return payload;
 
-            return obj.ToJsonString();
+            var current = node;
+            for (int i = 0; i < parts.Length - 1; i++)
+            {
+                if (current is JsonObject obj && obj.ContainsKey(parts[i]))
+                {
+                    current = obj[parts[i]];
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "[Replay] Timestamp path segment '{Segment}' not found in payload — sending original.\n" +
+                        "  Path   : {Path}\n" +
+                        "  Payload: {Payload}",
+                        parts[i], jsonPath, payload);
+                    return payload;
+                }
+            }
+
+            string lastPart = parts[^1];
+            if (current is JsonObject finalObj && finalObj.ContainsKey(lastPart))
+            {
+                var existingVal = finalObj[lastPart];
+                
+                // Try numeric (epoch). JSON numbers can be int/long/double — try all.
+                bool isNumeric = existingVal is JsonValue v &&
+                    (v.TryGetValue(out long _) || v.TryGetValue(out int _) || v.TryGetValue(out double _));
+
+                if (isNumeric)
+                {
+                    var newEpoch = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    _logger.LogInformation(
+                        "[Replay] Timestamp updated (epoch): {OldTs} → {NewTs}  (path: '{Path}')",
+                        existingVal, newEpoch, jsonPath);
+                    finalObj[lastPart] = newEpoch;
+                }
+                else
+                {
+                    var newStr = newValue.ToString("O");
+                    _logger.LogInformation(
+                        "[Replay] Timestamp updated (string): {OldTs} → {NewTs}  (path: '{Path}')",
+                        existingVal?.ToJsonString(), newStr, jsonPath);
+                    finalObj[lastPart] = newStr;
+                }
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "[Replay] Timestamp key '{Key}' not found at path '{Path}' — sending original.\n" +
+                    "  Payload: {Payload}",
+                    lastPart, jsonPath, payload);
+            }
+
+            return node.ToJsonString();
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "[Replay] Exception while adjusting timestamp — sending original payload. Payload: {Payload}", payload);
             return payload;
         }
     }

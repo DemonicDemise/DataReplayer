@@ -2,6 +2,32 @@ const API = '';
 let selectedSpeed = 1;
 let statusPollTimer = null;
 
+// ─── Date Helpers ─────────────────────────────────────────
+// Форматирует Date в строку для input[type="datetime-local"] (без секунд)
+function toDatetimeLocal(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}` +
+           `T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function initDefaultDates() {
+    const now = new Date();
+    // Начало сегодняшнего дня (00:00 в локальном времени)
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0);
+
+    // Events tab
+    const filterFrom = document.getElementById('filterFrom');
+    const filterTo   = document.getElementById('filterTo');
+    if (!filterFrom.value) filterFrom.value = toDatetimeLocal(todayStart);
+    if (!filterTo.value)   filterTo.value   = toDatetimeLocal(now);
+
+    // Replay tab
+    const replayStart = document.getElementById('replayStart');
+    const replayEnd   = document.getElementById('replayEnd');
+    if (!replayStart.value) replayStart.value = toDatetimeLocal(todayStart);
+    if (!replayEnd.value)   replayEnd.value   = toDatetimeLocal(now);
+}
+
 // ─── Tab Navigation ───────────────────────────────────────
 document.querySelectorAll('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -27,22 +53,22 @@ async function loadSettings() {
         document.getElementById('mqttPass').value        = d.mqttPassword   || '';
         document.getElementById('retentionHours').value  = d.retentionHours || 24;
         document.getElementById('isRecordingEnabled').checked = d.isRecordingEnabled || false;
-        document.getElementById('topics').value  = (d.subscribedTopics   || []).join('\n');
-        document.getElementById('trackers').value = (d.trackersWhiteList || []).join('\n');
+        document.getElementById('trackers').value        = (d.trackersWhiteList || []).join('\n');
 
-        updateChips('topics',   'topicChips');
-        updateChips('trackers', 'trackerChips');
-        updateRecordingBadge(d.isRecordingEnabled);
+        // Load topics into array
+        activeTopics = d.subscribedTopics || [];
+        renderTopicChips();
+
+        updateTrackerChips();
+        updateRecordingBadge(d.isRecordingEnabled || false);
     } catch (e) {
         console.warn('Could not load settings:', e);
     }
 }
 
-function updateChips(textareaId, chipsId) {
-    const textarea = document.getElementById(textareaId);
-    const chips = document.getElementById(chipsId);
-    const vals = textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
-    chips.innerHTML = vals.map(v => `<span class="chip">${escHtml(v)}</span>`).join('');
+function updateTrackerChips() {
+    const vals = document.getElementById('trackers').value.split('\n').map(s => s.trim()).filter(Boolean);
+    document.getElementById('trackerChips').innerHTML = vals.map(v => `<span class="chip">${escHtml(v)}</span>`).join('');
 }
 
 function updateRecordingBadge(enabled) {
@@ -51,21 +77,74 @@ function updateRecordingBadge(enabled) {
     else badge.classList.remove('visible');
 }
 
-document.getElementById('topics').addEventListener('input',   () => updateChips('topics',   'topicChips'));
-document.getElementById('trackers').addEventListener('input', () => updateChips('trackers', 'trackerChips'));
+// ─── Topic management (in-memory array) ──────────────────
+let activeTopics = [];
+
+function renderTopicChips() {
+    const container = document.getElementById('topicChips');
+    container.innerHTML = activeTopics.length === 0
+        ? '<span style="color:var(--text-3);font-size:12px;">Топики не добавлены</span>'
+        : activeTopics.map((t, i) => `
+            <span class="chip">
+                ${escHtml(t)}
+                <span class="chip-remove" data-index="${i}" title="Remove">×</span>
+            </span>`).join('');
+
+    // Wire up remove buttons
+    container.querySelectorAll('.chip-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+            activeTopics.splice(parseInt(btn.dataset.index), 1);
+            renderTopicChips();
+        });
+    });
+
+    // Keep hidden input in sync (used by save payload)
+    document.getElementById('topics').value = activeTopics.join('\n');
+}
+
+function addTopic(val) {
+    const t = val.trim();
+    if (!t || activeTopics.includes(t)) return;
+    activeTopics.push(t);
+    renderTopicChips();
+}
+
+// Dropdown preset
+document.getElementById('topicPreset').addEventListener('change', e => {
+    if (e.target.value) {
+        addTopic(e.target.value);
+        e.target.value = '';   // reset dropdown
+    }
+});
+
+// Custom input — Enter key or Add button
+document.getElementById('topicCustom').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); addTopic(e.target.value); e.target.value = ''; }
+});
+document.getElementById('addTopicBtn').addEventListener('click', () => {
+    const input = document.getElementById('topicCustom');
+    addTopic(input.value);
+    input.value = '';
+});
+
+renderTopicChips(); // Initial empty render
+
+
+document.getElementById('trackers').addEventListener('input', updateTrackerChips);
 document.getElementById('isRecordingEnabled').addEventListener('change', e => updateRecordingBadge(e.target.checked));
 
 document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
     const payload = {
         id: 1,
-        mqttBrokerHost:       document.getElementById('mqttHost').value.trim(),
-        mqttBrokerPort:       parseInt(document.getElementById('mqttPort').value) || 1883,
-        mqttUsername:         document.getElementById('mqttUser').value.trim() || null,
-        mqttPassword:         document.getElementById('mqttPass').value || null,
-        retentionHours:       parseInt(document.getElementById('retentionHours').value) || 24,
-        isRecordingEnabled:   document.getElementById('isRecordingEnabled').checked,
-        subscribedTopics:     document.getElementById('topics').value.split('\n').map(s=>s.trim()).filter(Boolean),
-        trackersWhiteList:    document.getElementById('trackers').value.split('\n').map(s=>s.trim()).filter(Boolean),
+        mqttBrokerHost:              document.getElementById('mqttHost').value.trim(),
+        mqttBrokerPort:              parseInt(document.getElementById('mqttPort').value) || 1883,
+        mqttUsername:                document.getElementById('mqttUser').value.trim() || null,
+        mqttPassword:                document.getElementById('mqttPass').value || null,
+        retentionHours:              parseInt(document.getElementById('retentionHours').value) || 24,
+        isRecordingEnabled:          document.getElementById('isRecordingEnabled').checked,
+        trackerIdTopicSegmentIndex:  1,
+        subscribedTopics:            activeTopics,
+        trackersWhiteList:           document.getElementById('trackers').value.split('\n').map(s=>s.trim()).filter(Boolean),
     };
 
     try {
@@ -76,7 +155,7 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
         });
         if (res.ok) showToast('settingsToast');
         updateRecordingBadge(payload.isRecordingEnabled);
-    } catch (e) { alert('Failed to save settings: ' + e.message); }
+    } catch (e) { alert('Не удалось сохранить настройки: ' + e.message); }
 });
 
 function showToast(id) {
@@ -88,7 +167,7 @@ function showToast(id) {
 // ─── Events Tab ───────────────────────────────────────────
 document.getElementById('filterEventsBtn').addEventListener('click', loadEvents);
 document.getElementById('clearEventsBtn').addEventListener('click', async () => {
-    if (!confirm('Delete ALL recorded events from the database?')) return;
+    if (!confirm('Удалить ВСЕ записанные события из базы данных?')) return;
     await fetch(`${API}/api/events`, { method: 'DELETE' });
     await loadEvents();
 });
@@ -98,9 +177,12 @@ async function loadEvents() {
     const to      = document.getElementById('filterTo').value;
     const tracker = document.getElementById('filterTracker').value.trim();
 
+    // Если «по» не указано — используем текущее UTC-время
+    const toDate = to ? new Date(to) : new Date();
+
     let url = `${API}/api/events?pageSize=200`;
     if (from) url += `&from=${encodeURIComponent(new Date(from).toISOString())}`;
-    if (to)   url += `&to=${encodeURIComponent(new Date(to).toISOString())}`;
+    url += `&to=${encodeURIComponent(toDate.toISOString())}`;
     if (tracker) url += `&trackerId=${encodeURIComponent(tracker)}`;
 
     try {
@@ -109,7 +191,7 @@ async function loadEvents() {
         renderEvents(data.items, data.total);
     } catch (e) {
         document.getElementById('eventsBody').innerHTML =
-            `<tr><td colspan="4" class="empty-row">Error loading events</td></tr>`;
+            `<tr><td colspan="4" class="empty-row">Ошибка загрузки событий</td></tr>`;
     }
 }
 
@@ -117,11 +199,11 @@ function renderEvents(items, total) {
     const body = document.getElementById('eventsBody');
     const stats = document.getElementById('eventStats');
 
-    stats.innerHTML = `<div class="stat-chip">Total <strong>${total}</strong></div>
-                       <div class="stat-chip">Showing <strong>${items.length}</strong></div>`;
+    stats.innerHTML = `<div class="stat-chip">Всего <strong>${total}</strong></div>
+                       <div class="stat-chip">Показано <strong>${items.length}</strong></div>`;
 
     if (items.length === 0) {
-        body.innerHTML = `<tr><td colspan="4" class="empty-row">No events found</td></tr>`;
+        body.innerHTML = `<tr><td colspan="4" class="empty-row">События не найдены</td></tr>`;
         return;
     }
 
@@ -174,7 +256,6 @@ document.getElementById('replayForm').addEventListener('submit', async e => {
         startTime:         new Date(document.getElementById('replayStart').value).toISOString(),
         endTime:           new Date(document.getElementById('replayEnd').value).toISOString(),
         speedMultiplier:   selectedSpeed,
-        timestampJsonPath: document.getElementById('replayTimePath').value,
         trackerFilter:     trackerFilter
     };
 
@@ -185,8 +266,8 @@ document.getElementById('replayForm').addEventListener('submit', async e => {
             body: JSON.stringify(cmd)
         });
         if (res.ok) setReplayUI(true);
-        else alert('Failed to start replay');
-    } catch (e) { alert('Error: ' + e.message); }
+        else alert('Не удалось запустить воспроизведение');
+    } catch (e) { alert('Ошибка: ' + e.message); }
 });
 
 stopBtn.addEventListener('click', async () => {
@@ -206,11 +287,11 @@ function setReplayUI(playing) {
 
     if (playing) {
         dot.className = 'status-dot playing';
-        label.textContent = 'Replaying…';
+        label.textContent = 'Воспроизведение…';
         progressInfo.style.display = 'flex';
     } else {
         dot.className = 'status-dot idle';
-        label.textContent = 'Idle';
+        label.textContent = 'Ожидание';
         progressInfo.style.display = 'none';
         document.getElementById('currentEvent').style.display = 'none';
         document.getElementById('progressBar').style.width = '0%';
@@ -230,7 +311,7 @@ async function pollStatus() {
         if (playing && p && p.total > 0) {
             const pct = Math.round((p.sent / p.total) * 100);
             document.getElementById('progressBar').style.width = pct + '%';
-            document.getElementById('progressText').textContent = `${p.sent} / ${p.total} events (${pct}%)`;
+            document.getElementById('progressText').textContent = `${p.sent} / ${p.total} событий (${pct}%)`;
 
             if (p.currentTopic) {
                 const el = document.getElementById('currentEvent');
@@ -249,4 +330,5 @@ async function pollStatus() {
 
 // ─── Init ─────────────────────────────────────────────────
 loadSettings();
+initDefaultDates();
 setInterval(pollStatus, 2000);

@@ -94,22 +94,19 @@ public class MqttRecordingService : BackgroundService
 
         if (!settings.IsRecordingEnabled) return;
 
-        // Tracker whitelist filtering
-        string? matchedTrackerId = null;
+        // Extract tracker ID from the configured segment of the topic path.
+        // Example: "BADGE/9F31510F9918CE60/up/pressure" with index=1 → "9F31510F9918CE60"
+        var segments = topic.Split('/');
+        string? extractedTrackerId = null;
+        if (segments.Length > 1)
+            extractedTrackerId = segments[1];
+
+        // Whitelist filtering: if list is non-empty, only accept matching tracker IDs
         if (settings.TrackersWhiteList.Count > 0)
         {
-            bool matched = false;
-            foreach (var id in settings.TrackersWhiteList)
-            {
-                if (topic.Contains(id, StringComparison.OrdinalIgnoreCase) ||
-                    payload.Contains(id, StringComparison.OrdinalIgnoreCase))
-                {
-                    matched = true;
-                    matchedTrackerId = id;
-                    break;
-                }
-            }
-            if (!matched) return;
+            if (extractedTrackerId is null ||
+                !settings.TrackersWhiteList.Contains(extractedTrackerId, StringComparer.OrdinalIgnoreCase))
+                return;
         }
 
         var ctx = scope.ServiceProvider.GetRequiredService<ReplayerDbContext>();
@@ -118,7 +115,7 @@ public class MqttRecordingService : BackgroundService
             ReceivedAt = DateTime.UtcNow,
             Endpoint = topic,
             Payload = payload,
-            TrackerId = matchedTrackerId
+            TrackerId = extractedTrackerId
         });
         await ctx.SaveChangesAsync(ct);
     }

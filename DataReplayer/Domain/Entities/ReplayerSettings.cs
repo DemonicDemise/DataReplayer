@@ -8,6 +8,10 @@ public class ReplayerSettings
     public int RetentionHours { get; set; } = 24;
     public bool IsRecordingEnabled { get; set; } = false;
 
+    // Which segment of the topic path contains the Tracker/Device ID.
+    // Example: "BADGE/9F31510F9918CE60/up/pressure" → index 1
+    public int TrackerIdTopicSegmentIndex { get; set; } = 1;
+
     // MQTT broker connection
     public string MqttBrokerHost { get; set; } = "localhost";
     public int MqttBrokerPort { get; set; } = 1883;
