@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DMMS Data Replayer</title>
+    <meta name="description" content="Record and replay raw MQTT data streams with precise timestamp control.">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="logo">
+            <div class="logo-mark">DR</div>
+            <div>
+                <div class="logo-title">Data Replayer</div>
+                <div class="logo-sub">DMMS Diagnostics</div>
+            </div>
+        </div>
+        <nav class="nav">
+            <button class="nav-item active" data-tab="settings" id="navSettings">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                Settings
+            </button>
+            <button class="nav-item" data-tab="events" id="navEvents">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Recorded Events
+            </button>
+            <button class="nav-item" data-tab="replay" id="navReplay">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Replay Wizard
+            </button>
+        </nav>
+        <div class="sidebar-footer">
+            <div class="recording-badge" id="recordingBadge">
+                <div class="pulse-dot"></div>
+                <span>Recording</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main">
+
+        <!-- ── SETTINGS TAB ── -->
+        <section class="tab active" id="tabSettings">
+            <div class="page-header">
+                <h1>Recording Settings</h1>
+                <p>Configure which MQTT topics and trackers to record, and how long to keep data.</p>
+            </div>
+
+            <div class="grid-2">
+                <!-- MQTT Broker -->
+                <div class="card">
+                    <div class="card-header">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                        <h2>MQTT Broker</h2>
+                    </div>
+                    <div class="form-group">
+                        <label>Broker Host</label>
+                        <input type="text" id="mqttHost" placeholder="localhost">
+                    </div>
+                    <div class="form-group">
+                        <label>Port</label>
+                        <input type="number" id="mqttPort" placeholder="1883">
+                    </div>
+                    <div class="form-group">
+                        <label>Username <span class="optional">(optional)</span></label>
+                        <input type="text" id="mqttUser" placeholder="—">
+                    </div>
+                    <div class="form-group">
+                        <label>Password <span class="optional">(optional)</span></label>
+                        <input type="password" id="mqttPass" placeholder="—">
+                    </div>
+                </div>
+
+                <!-- Retention & Recording -->
+                <div class="card">
+                    <div class="card-header">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 22H2V9l10-7 10 7Z"/><path d="M12 22v-7"/></svg>
+                        <h2>Storage & Recording</h2>
+                    </div>
+                    <div class="form-group">
+                        <label>Data Retention (hours)</label>
+                        <input type="number" id="retentionHours" placeholder="24" min="1">
+                        <span class="hint">Events older than this are auto-deleted.</span>
+                    </div>
+                    <div class="toggle-row">
+                        <div>
+                            <div class="toggle-label">Enable Recording</div>
+                            <div class="toggle-hint">Start capturing MQTT messages to DB</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="isRecordingEnabled">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Topics -->
+                <div class="card">
+                    <div class="card-header">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        <h2>Subscribed Topics</h2>
+                    </div>
+                    <div class="form-group">
+                        <label>One topic per line (MQTT wildcards supported)</label>
+                        <textarea id="topics" rows="5" placeholder="tracker/+/data&#10;telemetry/#&#10;position/+/raw"></textarea>
+                    </div>
+                    <div id="topicChips" class="chip-list"></div>
+                </div>
+
+                <!-- Trackers Whitelist -->
+                <div class="card">
+                    <div class="card-header">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <h2>Trackers Whitelist</h2>
+                    </div>
+                    <div class="form-group">
+                        <label>Tracker IDs to record (one per line). Leave empty to record all.</label>
+                        <textarea id="trackers" rows="5" placeholder="TRACKER-001&#10;TRACKER-042"></textarea>
+                    </div>
+                    <div id="trackerChips" class="chip-list"></div>
+                </div>
+            </div>
+
+            <div class="action-bar">
+                <button class="btn btn-primary" id="saveSettingsBtn">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    Save Settings
+                </button>
+                <div class="toast" id="settingsToast">Settings saved!</div>
+            </div>
+        </section>
+
+        <!-- ── EVENTS TAB ── -->
+        <section class="tab" id="tabEvents">
+            <div class="page-header">
+                <h1>Recorded Events</h1>
+                <p>Browse captured MQTT messages stored in the database.</p>
+            </div>
+
+            <div class="events-toolbar">
+                <div class="filter-row">
+                    <div class="form-group inline">
+                        <label>From</label>
+                        <input type="datetime-local" id="filterFrom">
+                    </div>
+                    <div class="form-group inline">
+                        <label>To</label>
+                        <input type="datetime-local" id="filterTo">
+                    </div>
+                    <div class="form-group inline">
+                        <label>Tracker ID</label>
+                        <input type="text" id="filterTracker" placeholder="All">
+                    </div>
+                    <button class="btn btn-secondary" id="filterEventsBtn">Filter</button>
+                    <button class="btn btn-ghost" id="clearEventsBtn">Clear All</button>
+                </div>
+                <div class="stat-chips" id="eventStats"></div>
+            </div>
+
+            <div class="card table-card">
+                <table class="events-table">
+                    <thead>
+                        <tr>
+                            <th>Time (UTC)</th>
+                            <th>Topic / Endpoint</th>
+                            <th>Tracker ID</th>
+                            <th>Payload Preview</th>
+                        </tr>
+                    </thead>
+                    <tbody id="eventsBody">
+                        <tr><td colspan="4" class="empty-row">Click Filter to load events</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ── REPLAY TAB ── -->
+        <section class="tab" id="tabReplay">
+            <div class="page-header">
+                <h1>Replay Wizard</h1>
+                <p>Select a recorded time window and broadcast it back to your MQTT broker.</p>
+            </div>
+
+            <!-- Status card -->
+            <div class="card status-card" id="replayStatusCard">
+                <div class="status-header">
+                    <div class="status-indicator" id="statusIndicator">
+                        <div class="status-dot idle"></div>
+                        <span id="statusLabel">Idle</span>
+                    </div>
+                    <div class="progress-info" id="progressInfo" style="display:none">
+                        <span id="progressText">0 / 0 events</span>
+                        <div class="progress-bar-wrap">
+                            <div class="progress-bar" id="progressBar"></div>
+                        </div>
+                    </div>
+                </div>
+                <div id="currentEvent" class="current-event" style="display:none"></div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                    <h2>Session Configuration</h2>
+                </div>
+                <form id="replayForm">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Start Time (UTC)</label>
+                            <input type="datetime-local" id="replayStart" required>
+                        </div>
+                        <div class="form-group">
+                            <label>End Time (UTC)</label>
+                            <input type="datetime-local" id="replayEnd" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Playback Speed</label>
+                            <div class="speed-buttons" id="speedButtons">
+                                <button type="button" class="speed-btn" data-speed="0.5">0.5×</button>
+                                <button type="button" class="speed-btn active" data-speed="1">1×</button>
+                                <button type="button" class="speed-btn" data-speed="2">2×</button>
+                                <button type="button" class="speed-btn" data-speed="5">5×</button>
+                                <button type="button" class="speed-btn" data-speed="10">10×</button>
+                            </div>
+                            <input type="hidden" id="replaySpeed" value="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Timestamp JSON Path</label>
+                            <input type="text" id="replayTimePath" value="$.timestamp" placeholder="$.time">
+                            <span class="hint">Field in JSON payload to override with current time.</span>
+                        </div>
+                        <div class="form-group full-width">
+                            <label>Tracker Filter <span class="optional">(leave empty for all)</span></label>
+                            <input type="text" id="replayTrackerFilter" placeholder="TRACKER-001, TRACKER-042">
+                            <span class="hint">Comma-separated list of tracker IDs to include in replay.</span>
+                        </div>
+                    </div>
+                    <div class="replay-actions">
+                        <button type="submit" class="btn btn-success" id="playBtn">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            Start Replay
+                        </button>
+                        <button type="button" class="btn btn-danger" id="stopBtn" disabled>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>
+                            Stop
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
