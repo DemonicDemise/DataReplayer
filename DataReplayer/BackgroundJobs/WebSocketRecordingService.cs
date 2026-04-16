@@ -26,13 +26,16 @@ public class WebSocketRecordingService : BackgroundService
         {
             ReplayerSettings settings;
             string? wsUrl;
+            string? apiKey;
             using (var scope = _sp.CreateScope())
             {
                 var settingsSvc = scope.ServiceProvider.GetRequiredService<ISettingsService>();
                 settings = await settingsSvc.GetSettingsAsync(stoppingToken);
 
                 var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
-                wsUrl = config.GetSection("Rtls")["WebSocketUrl"];
+                var rtlsMgr = config.GetSection("RtlsManager");
+                wsUrl = rtlsMgr["WebSocketAddress"];
+                apiKey = rtlsMgr["ApiKey"];
             }
 
             if (!settings.IsRtlsRecordingEnabled || string.IsNullOrWhiteSpace(wsUrl))
@@ -43,12 +46,25 @@ public class WebSocketRecordingService : BackgroundService
 
             try
             {
+                // Ensure URL is in valid format for ClientWebSocket
+                if (!wsUrl.EndsWith("/")) wsUrl += "/";
+                
                 using var ws = new ClientWebSocket();
                 await ws.ConnectAsync(new Uri(wsUrl), stoppingToken);
                 _logger.LogInformation("Connected to RTLS WebSocket at {Url}", wsUrl);
 
-                // Send subscription command
-                var subscribeMsg = "{\"method\": \"subscribe\", \"resource\": \"/feeds/\"}";
+                // Send authenticated subscription command
+                var subscribeObj = new
+                {
+                    headers = new { X_ApiKey = apiKey },
+                    method = "subscribe",
+                    resource = "/feeds/"
+                };
+                // Sewio expects X-ApiKey (dash), but C# anonymous types use underscores. 
+                // We'll use a raw string for exact header name or a custom serializer option.
+                // Raw string is safer for specific Sewio requirements.
+                var subscribeMsg = "{\"headers\": {\"X-ApiKey\": \"" + apiKey + "\"}, \"method\": \"subscribe\", \"resource\": \"/feeds/\"}";
+                
                 var subscribeBytes = Encoding.UTF8.GetBytes(subscribeMsg);
                 await ws.SendAsync(new ArraySegment<byte>(subscribeBytes), WebSocketMessageType.Text, true, stoppingToken);
 

@@ -6,7 +6,7 @@
     <title>DMMS Data Replayer</title>
     <meta name="description" content="Запись и воспроизведение потоков данных MQTT с точным управлением временем.">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css?v=8">
+    <link rel="stylesheet" href="styles.css?v=10">
 </head>
 <body>
     <!-- Sidebar -->
@@ -309,37 +309,17 @@
                         </div>
                     </div>
 
-                    <!-- Type-specific options -->
-                    <div class="grid-2" style="margin-top:20px; padding-top:20px; border-top:1px solid var(--border);">
-                        <div>
-                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                                <span style="font-size:12px; font-weight:600; color:var(--text-2); text-transform:uppercase; letter-spacing:0.06em;">MQTT</span>
-                            </div>
-                            <div class="form-group">
-                                <label>Новый NativeId <span class="optional">(опционально)</span></label>
-                                <input type="text" id="replayTargetTracker" placeholder="Например: 1B60D8AAD5B4E241">
-                                <span class="hint">Заменит исходный ID трекера в топике перед отправкой.</span>
-                            </div>
-                            <div class="form-group">
-                                <label>Фильтр трекеров <span class="optional">(пусто = все)</span></label>
-                                <select id="replayTrackerFilter"></select>
-                            </div>
+                    <!-- Unified options -->
+                    <div style="margin-top:20px; padding-top:20px; border-top:1px solid var(--border);">
+                        <div class="form-group full-width">
+                            <label>Целевой NativeId <span class="optional">(опционально)</span></label>
+                            <input type="text" id="commonReplayTargetTracker" placeholder="Например: 1B60D8AAD5B4E241">
+                            <span class="hint">Заменит исходный NativeId в сообщении перед отправкой. Если пусто для RTLS — определится автоматически.</span>
                         </div>
-                        <div>
-                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
-                                <span style="font-size:12px; font-weight:600; color:var(--text-2); text-transform:uppercase; letter-spacing:0.06em;">RTLS (Sewio)</span>
-                            </div>
-                            <div class="form-group">
-                                <label>Переопределить NativeId <span class="optional">(опционально)</span></label>
-                                <input type="text" id="rtlsReplayTargetTracker" placeholder="Например: 1B60D8AAD5B4E241">
-                                <span class="hint">Если пусто — NativeId определяется по MAC-адресу автоматически.</span>
-                            </div>
-                            <div class="form-group">
-                                <label>Фильтр по MAC <span class="optional">(пусто = все)</span></label>
-                                <select id="rtlsReplayTrackerFilter"></select>
-                            </div>
+                        <div class="form-group full-width">
+                            <label>Фильтр по NativeId <span class="optional">(пусто = все)</span></label>
+                            <select id="commonReplayTrackerFilter"></select>
+                            <span class="hint">Выберите ID для фильтрации или «Все трекеры».</span>
                         </div>
                     </div>
 
@@ -357,10 +337,23 @@
             </div>
         </section>
 
+        <!-- JSON Modal -->
+        <div id="jsonModal" class="modal-overlay">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2>Полное сообщение</h2>
+                    <button type="button" class="btn-close" id="closeJsonModal">×</button>
+                </div>
+                <div class="modal-body">
+                    <pre id="jsonModalContent"></pre>
+                </div>
+            </div>
+        </div>
+
     </main>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=9"></script>
 </body>
 </html>
 

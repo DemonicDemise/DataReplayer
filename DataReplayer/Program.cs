@@ -187,16 +187,29 @@ using (var scope = app.Services.CreateScope())
 
     // Apply schema changes that EnsureCreatedAsync won't pick up on existing DBs
     await ctx.Database.ExecuteSqlRawAsync("""
+        -- 1. Update Settings table
         ALTER TABLE "Settings"
             ADD COLUMN IF NOT EXISTS "RtlsWebSocketUrl"          TEXT    NOT NULL DEFAULT 'ws://localhost:8080/feeds/',
             ADD COLUMN IF NOT EXISTS "IsRtlsRecordingEnabled"    BOOLEAN NOT NULL DEFAULT FALSE;
+
+        -- 2. Ensure RecordedRtlsEvents table exists
+        CREATE TABLE IF NOT EXISTS "RecordedRtlsEvents" (
+            "Id"            UUID         NOT NULL PRIMARY KEY,
+            "ReceivedAt"    TIMESTAMP WITH TIME ZONE NOT NULL,
+            "UwbMacAddress" VARCHAR(100) NOT NULL,
+            "RawPayload"    JSONB        NOT NULL
+        );
+
+        -- 3. Ensure indexes exist for performance
+        CREATE INDEX IF NOT EXISTS "IX_RecordedRtlsEvents_ReceivedAt" ON "RecordedRtlsEvents" ("ReceivedAt");
+        CREATE INDEX IF NOT EXISTS "IX_RecordedRtlsEvents_UwbMacAddress" ON "RecordedRtlsEvents" ("UwbMacAddress");
         """);
 
     // Seed default settings row so background services don't race to create it
     if (!await ctx.Settings.AnyAsync())
     {
         var mqttCfg  = app.Configuration.GetSection("Mqtt");
-        var rtlsCfg  = app.Configuration.GetSection("Rtls");
+        var rtlsCfg  = app.Configuration.GetSection("RtlsManager");
 
         ctx.Settings.Add(new ReplayerSettings());
         await ctx.SaveChangesAsync();

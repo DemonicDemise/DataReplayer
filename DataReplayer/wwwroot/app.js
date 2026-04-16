@@ -218,7 +218,7 @@ function renderEvents(items, total) {
             <td>${fmt(e.receivedAt)}</td>
             <td><span class="topic-badge">${escHtml(e.endpoint)}</span></td>
             <td>${escHtml(e.trackerId || '—')}</td>
-            <td class="payload-preview">${escHtml(preview(e.payload))}</td>
+            <td class="payload-preview" data-payload="${escHtml(e.payload)}">${escHtml(preview(e.payload))}</td>
         </tr>
     `).join('');
 }
@@ -235,6 +235,36 @@ function fmt(iso) {
 function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+
+// ─── Modal Logic ──────────────────────────────────────────
+function showJsonModal(payloadStr) {
+    const modal = document.getElementById('jsonModal');
+    const content = document.getElementById('jsonModalContent');
+    try {
+        const obj = JSON.parse(payloadStr);
+        content.textContent = JSON.stringify(obj, null, 2);
+    } catch {
+        content.textContent = payloadStr; // fallback for raw text
+    }
+    modal.classList.add('show');
+}
+
+document.getElementById('closeJsonModal')?.addEventListener('click', () => {
+    document.getElementById('jsonModal').classList.remove('show');
+});
+
+document.getElementById('jsonModal')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('jsonModal')) {
+        document.getElementById('jsonModal').classList.remove('show');
+    }
+});
+
+document.getElementById('eventsBody').addEventListener('click', (e) => {
+    const target = e.target.closest('.payload-preview');
+    if (target && target.dataset.payload) {
+        showJsonModal(target.dataset.payload);
+    }
+});
 
 // ─── Speed Buttons (shared) ───────────────────────────────
 document.querySelectorAll('#speedButtons .speed-btn').forEach(btn => {
@@ -256,22 +286,23 @@ document.getElementById('replayForm').addEventListener('submit', async e => {
     const startTime = new Date(document.getElementById('replayStart').value).toISOString();
     const endTime   = new Date(document.getElementById('replayEnd').value).toISOString();
 
-    const mqttFilterVal = document.getElementById('replayTrackerFilter').value;
+    const filterVal = document.getElementById('commonReplayTrackerFilter').value;
+    const targetTracker = document.getElementById('commonReplayTargetTracker').value.trim() || null;
+
     const mqttCmd = {
         startTime,
         endTime,
         speedMultiplier:  selectedSpeed,
-        trackerFilter:    mqttFilterVal ? [mqttFilterVal] : null,
-        targetTrackerId:  document.getElementById('replayTargetTracker').value.trim() || null
+        trackerFilter:    filterVal ? [filterVal] : null,
+        targetTrackerId:  targetTracker
     };
 
-    const rtlsFilterVal = document.getElementById('rtlsReplayTrackerFilter').value;
     const rtlsCmd = {
         startTime,
         endTime,
         speedMultiplier: selectedSpeed,
-        macFilter:       rtlsFilterVal ? [rtlsFilterVal] : null,
-        targetNativeId:  document.getElementById('rtlsReplayTargetTracker').value.trim() || null
+        macFilter:       filterVal ? [filterVal] : null,
+        targetNativeId:  targetTracker
     };
 
     const [mqttRes, rtlsRes] = await Promise.allSettled([
@@ -388,24 +419,20 @@ async function pollRtlsStatus() {
     } catch (e) {}
 }
 
-async function loadTrackers() {
+async function loadUnifiedTrackers() {
     try {
-        const res = await fetch(`${API}/api/events/trackers`);
-        if (!res.ok) return;
-        const trackers = await res.json();
-        document.getElementById('replayTrackerFilter').innerHTML =
-            '<option value="">-- Все трекеры --</option>' +
-            trackers.map(t => `<option value="${t}">${escHtml(t)}</option>`).join('');
-    } catch (e) {}
-}
+        const [mqttRes, rtlsRes] = await Promise.all([
+            fetch(`${API}/api/events/trackers`),
+            fetch(`${API}/api/rtls-events/macs`)
+        ]);
+        let trackers = [];
+        if (mqttRes.ok) trackers.push(...(await mqttRes.json()));
+        if (rtlsRes.ok) trackers.push(...(await rtlsRes.json()));
+        
+        trackers = [...new Set(trackers)]; // deduplicate
 
-async function loadRtlsTrackers() {
-    try {
-        const res = await fetch(`${API}/api/rtls-events/macs`);
-        if (!res.ok) return;
-        const trackers = await res.json();
-        document.getElementById('rtlsReplayTrackerFilter').innerHTML =
-            '<option value="">-- Все трекеры --</option>' +
+        document.getElementById('commonReplayTrackerFilter').innerHTML =
+            '<option value="">-- Выбрать NativeId --</option>' +
             trackers.map(t => `<option value="${t}">${escHtml(t)}</option>`).join('');
     } catch (e) {}
 }
@@ -468,8 +495,7 @@ async function startSignalR() {
 function initAll() {
     loadSettings();
     initDefaultDates();
-    loadTrackers();
-    loadRtlsTrackers();
+    loadUnifiedTrackers();
     startSignalR();
     setInterval(pollStatus, 2000);
     setInterval(pollRtlsStatus, 2000);
