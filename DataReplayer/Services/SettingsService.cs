@@ -54,15 +54,12 @@ public class SettingsService : ISettingsService
             ctx.Settings.Add(settings);
         }
 
-        settings.RetentionHours = input.RetentionHours;
-        settings.TrackersWhiteList = input.TrackersWhiteList;
-        settings.SubscribedTopics = input.SubscribedTopics;
-        settings.IsRecordingEnabled = input.IsRecordingEnabled;
-        settings.TrackerIdTopicSegmentIndex = input.TrackerIdTopicSegmentIndex;
-        settings.MqttBrokerHost = input.MqttBrokerHost;
-        settings.MqttBrokerPort = input.MqttBrokerPort;
-        settings.MqttUsername = input.MqttUsername;
-        settings.MqttPassword = input.MqttPassword;
+        settings.RetentionHours              = input.RetentionHours;
+        settings.TrackersWhiteList            = input.TrackersWhiteList;
+        settings.SubscribedTopics             = input.SubscribedTopics;
+        settings.IsRecordingEnabled           = input.IsRecordingEnabled;
+        settings.TrackerIdTopicSegmentIndex   = input.TrackerIdTopicSegmentIndex;
+        settings.IsRtlsRecordingEnabled       = input.IsRtlsRecordingEnabled;
 
         await ctx.SaveChangesAsync(ct);
     }

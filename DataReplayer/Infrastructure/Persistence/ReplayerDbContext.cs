@@ -8,6 +8,7 @@ public class ReplayerDbContext : DbContext
     public ReplayerDbContext(DbContextOptions<ReplayerDbContext> options) : base(options) { }
 
     public DbSet<RecordedDataEvent> RecordedEvents { get; set; } = null!;
+    public DbSet<RecordedRtlsEvent> RecordedRtlsEvents { get; set; } = null!;
     public DbSet<ReplayerSettings> Settings { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -38,6 +39,12 @@ public class ReplayerDbContext : DbContext
                     v => string.Join('\n', v),
                     v => v == "" ? new List<string>() : v.Split('\n', StringSplitOptions.RemoveEmptyEntries).ToList()
                 );
+        });
+
+        modelBuilder.Entity<RecordedRtlsEvent>(builder =>
+        {
+            builder.HasIndex(x => x.ReceivedAt);
+            builder.HasIndex(x => x.UwbMacAddress);
         });
     }
 }

@@ -35,10 +35,13 @@ document.querySelectorAll('.nav-item').forEach(btn => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
         document.getElementById('tab' + capitalize(btn.dataset.tab)).classList.add('active');
+        localStorage.setItem('activeTab', btn.dataset.tab);
     });
 });
 
-function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+function capitalize(s) { 
+    return s.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(''); 
+}
 
 // ─── Settings ─────────────────────────────────────────────
 async function loadSettings() {
@@ -47,20 +50,17 @@ async function loadSettings() {
         if (!res.ok) return;
         const d = await res.json();
 
-        document.getElementById('mqttHost').value        = d.mqttBrokerHost || 'localhost';
-        document.getElementById('mqttPort').value        = d.mqttBrokerPort || 1883;
-        document.getElementById('mqttUser').value        = d.mqttUsername   || '';
-        document.getElementById('mqttPass').value        = d.mqttPassword   || '';
         document.getElementById('retentionHours').value  = d.retentionHours || 24;
         document.getElementById('isRecordingEnabled').checked = d.isRecordingEnabled || false;
         document.getElementById('trackers').value        = (d.trackersWhiteList || []).join('\n');
+        document.getElementById('isRtlsRecordingEnabled').checked = d.isRtlsRecordingEnabled || false;
 
         // Load topics into array
         activeTopics = d.subscribedTopics || [];
         renderTopicChips();
 
         updateTrackerChips();
-        updateRecordingBadge(d.isRecordingEnabled || false);
+        updateRecordingBadges(d.isRecordingEnabled || false, d.isRtlsRecordingEnabled || false);
     } catch (e) {
         console.warn('Could not load settings:', e);
     }
@@ -71,10 +71,14 @@ function updateTrackerChips() {
     document.getElementById('trackerChips').innerHTML = vals.map(v => `<span class="chip">${escHtml(v)}</span>`).join('');
 }
 
-function updateRecordingBadge(enabled) {
-    const badge = document.getElementById('recordingBadge');
-    if (enabled) badge.classList.add('visible');
-    else badge.classList.remove('visible');
+function updateRecordingBadges(mqttEnabled, rtlsEnabled) {
+    const mqttBadge = document.getElementById('mqttRecordingBadge');
+    if (mqttEnabled) mqttBadge.classList.add('visible');
+    else mqttBadge.classList.remove('visible');
+
+    const rtlsBadge = document.getElementById('rtlsRecordingBadge');
+    if (rtlsEnabled) rtlsBadge.classList.add('visible');
+    else rtlsBadge.classList.remove('visible');
 }
 
 // ─── Topic management (in-memory array) ──────────────────
@@ -131,20 +135,22 @@ renderTopicChips(); // Initial empty render
 
 
 document.getElementById('trackers').addEventListener('input', updateTrackerChips);
-document.getElementById('isRecordingEnabled').addEventListener('change', e => updateRecordingBadge(e.target.checked));
+document.getElementById('isRecordingEnabled').addEventListener('change', e => {
+    updateRecordingBadges(e.target.checked, document.getElementById('isRtlsRecordingEnabled').checked);
+});
+document.getElementById('isRtlsRecordingEnabled').addEventListener('change', e => {
+    updateRecordingBadges(document.getElementById('isRecordingEnabled').checked, e.target.checked);
+});
 
 document.getElementById('saveSettingsBtn').addEventListener('click', async () => {
     const payload = {
         id: 1,
-        mqttBrokerHost:              document.getElementById('mqttHost').value.trim(),
-        mqttBrokerPort:              parseInt(document.getElementById('mqttPort').value) || 1883,
-        mqttUsername:                document.getElementById('mqttUser').value.trim() || null,
-        mqttPassword:                document.getElementById('mqttPass').value || null,
         retentionHours:              parseInt(document.getElementById('retentionHours').value) || 24,
         isRecordingEnabled:          document.getElementById('isRecordingEnabled').checked,
         trackerIdTopicSegmentIndex:  1,
         subscribedTopics:            activeTopics,
         trackersWhiteList:           document.getElementById('trackers').value.split('\n').map(s=>s.trim()).filter(Boolean),
+        isRtlsRecordingEnabled:      document.getElementById('isRtlsRecordingEnabled').checked,
     };
 
     try {
@@ -154,7 +160,7 @@ document.getElementById('saveSettingsBtn').addEventListener('click', async () =>
             body: JSON.stringify(payload)
         });
         if (res.ok) showToast('settingsToast');
-        updateRecordingBadge(payload.isRecordingEnabled);
+        updateRecordingBadges(payload.isRecordingEnabled, payload.isRtlsRecordingEnabled);
     } catch (e) { alert('Не удалось сохранить настройки: ' + e.message); }
 });
 
@@ -230,72 +236,112 @@ function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// ─── Speed Buttons ────────────────────────────────────────
-document.querySelectorAll('.speed-btn').forEach(btn => {
+// ─── Speed Buttons (shared) ───────────────────────────────
+document.querySelectorAll('#speedButtons .speed-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('#speedButtons .speed-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         selectedSpeed = parseFloat(btn.dataset.speed);
         document.getElementById('replaySpeed').value = selectedSpeed;
     });
 });
 
-// ─── Replay ───────────────────────────────────────────────
+// ─── Unified Replay ───────────────────────────────────────
 const playBtn = document.getElementById('playBtn');
 const stopBtn = document.getElementById('stopBtn');
 
 document.getElementById('replayForm').addEventListener('submit', async e => {
     e.preventDefault();
 
-    const trackerRaw = document.getElementById('replayTrackerFilter').value.trim();
-    const trackerFilter = trackerRaw
-        ? trackerRaw.split(',').map(s => s.trim()).filter(Boolean)
-        : null;
+    const startTime = new Date(document.getElementById('replayStart').value).toISOString();
+    const endTime   = new Date(document.getElementById('replayEnd').value).toISOString();
 
-    const cmd = {
-        startTime:         new Date(document.getElementById('replayStart').value).toISOString(),
-        endTime:           new Date(document.getElementById('replayEnd').value).toISOString(),
-        speedMultiplier:   selectedSpeed,
-        trackerFilter:     trackerFilter
+    const mqttFilterVal = document.getElementById('replayTrackerFilter').value;
+    const mqttCmd = {
+        startTime,
+        endTime,
+        speedMultiplier:  selectedSpeed,
+        trackerFilter:    mqttFilterVal ? [mqttFilterVal] : null,
+        targetTrackerId:  document.getElementById('replayTargetTracker').value.trim() || null
     };
 
-    try {
-        const res = await fetch(`${API}/api/replay/start`, {
+    const rtlsFilterVal = document.getElementById('rtlsReplayTrackerFilter').value;
+    const rtlsCmd = {
+        startTime,
+        endTime,
+        speedMultiplier: selectedSpeed,
+        macFilter:       rtlsFilterVal ? [rtlsFilterVal] : null,
+        targetNativeId:  document.getElementById('rtlsReplayTargetTracker').value.trim() || null
+    };
+
+    const [mqttRes, rtlsRes] = await Promise.allSettled([
+        fetch(`${API}/api/replay/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(cmd)
-        });
-        if (res.ok) setReplayUI(true);
-        else alert('Не удалось запустить воспроизведение');
-    } catch (e) { alert('Ошибка: ' + e.message); }
+            body: JSON.stringify(mqttCmd)
+        }),
+        fetch(`${API}/api/rtls-replay/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(rtlsCmd)
+        })
+    ]);
+
+    const mqttOk = mqttRes.status === 'fulfilled' && mqttRes.value.ok;
+    const rtlsOk = rtlsRes.status === 'fulfilled' && rtlsRes.value.ok;
+
+    if (mqttOk || rtlsOk) {
+        setReplayUI(mqttOk, rtlsOk);
+    } else {
+        alert('Не удалось запустить воспроизведение');
+    }
 });
 
 stopBtn.addEventListener('click', async () => {
-    try {
-        await fetch(`${API}/api/replay/stop`, { method: 'POST' });
-        setReplayUI(false);
-    } catch (e) {}
+    await Promise.allSettled([
+        fetch(`${API}/api/replay/stop`, { method: 'POST' }),
+        fetch(`${API}/api/rtls-replay/stop`, { method: 'POST' })
+    ]);
+    setReplayUI(false, false);
 });
 
-function setReplayUI(playing) {
-    playBtn.disabled = playing;
-    stopBtn.disabled = !playing;
+function setReplayUI(mqttPlaying, rtlsPlaying) {
+    const anyPlaying = mqttPlaying || rtlsPlaying;
+    playBtn.disabled = anyPlaying;
+    stopBtn.disabled = !anyPlaying;
 
-    const dot = document.querySelector('.status-dot');
-    const label = document.getElementById('statusLabel');
-    const progressInfo = document.getElementById('progressInfo');
-
-    if (playing) {
-        dot.className = 'status-dot playing';
-        label.textContent = 'Воспроизведение…';
-        progressInfo.style.display = 'flex';
+    // MQTT status
+    const mqttDot   = document.querySelector('#statusIndicator .status-dot');
+    const mqttLabel = document.getElementById('statusLabel');
+    const mqttProg  = document.getElementById('progressInfo');
+    if (mqttPlaying) {
+        mqttDot.className = 'status-dot playing';
+        mqttLabel.textContent = 'MQTT — Воспроизведение…';
+        mqttProg.style.display = 'flex';
     } else {
-        dot.className = 'status-dot idle';
-        label.textContent = 'Ожидание';
-        progressInfo.style.display = 'none';
-        document.getElementById('currentEvent').style.display = 'none';
+        mqttDot.className = 'status-dot idle';
+        mqttLabel.textContent = 'MQTT — Ожидание';
+        mqttProg.style.display = 'none';
         document.getElementById('progressBar').style.width = '0%';
-        document.getElementById('progressText').textContent = '—';
+        document.getElementById('progressText').textContent = 'MQTT: 0 / 0';
+        const ce = document.getElementById('currentEvent');
+        if (ce) ce.style.display = 'none';
+    }
+
+    // RTLS status
+    const rtlsDot   = document.querySelector('#rtlsStatusIndicator .status-dot');
+    const rtlsLabel = document.getElementById('rtlsStatusLabel');
+    const rtlsProg  = document.getElementById('rtlsProgressInfo');
+    if (rtlsPlaying) {
+        rtlsDot.className = 'status-dot playing';
+        rtlsLabel.textContent = 'RTLS — Воспроизведение…';
+        rtlsProg.style.display = 'flex';
+    } else {
+        rtlsDot.className = 'status-dot idle';
+        rtlsLabel.textContent = 'RTLS — Ожидание';
+        rtlsProg.style.display = 'none';
+        document.getElementById('rtlsProgressBar').style.width = '0%';
+        document.getElementById('rtlsProgressText').textContent = 'RTLS: 0 / 0';
     }
 }
 
@@ -304,15 +350,13 @@ async function pollStatus() {
         const res = await fetch(`${API}/api/replay/status`);
         if (!res.ok) return;
         const data = await res.json();
-
         const p = data.progress;
         const playing = data.isPlaying;
 
         if (playing && p && p.total > 0) {
             const pct = Math.round((p.sent / p.total) * 100);
             document.getElementById('progressBar').style.width = pct + '%';
-            document.getElementById('progressText').textContent = `${p.sent} / ${p.total} событий (${pct}%)`;
-
+            document.getElementById('progressText').textContent = `MQTT: ${p.sent} / ${p.total} (${pct}%)`;
             if (p.currentTopic) {
                 const el = document.getElementById('currentEvent');
                 el.style.display = 'block';
@@ -320,15 +364,131 @@ async function pollStatus() {
             }
         }
 
-        if (!playing && !playBtn.disabled) {
-            // Session ended naturally
-        } else if (!playing && playBtn.disabled) {
-            setReplayUI(false);
+        if (!playing && playBtn.disabled) setReplayUI(false, !document.querySelector('#rtlsStatusIndicator .status-dot').classList.contains('idle'));
+    } catch (e) {}
+}
+
+async function pollRtlsStatus() {
+    try {
+        const res = await fetch(`${API}/api/rtls-replay/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const playing = data.isPlaying;
+
+        if (playing && data.totalSessionEvents > 0) {
+            const pct = Math.round((data.processedCount / data.totalSessionEvents) * 100);
+            document.getElementById('rtlsProgressBar').style.width = pct + '%';
+            document.getElementById('rtlsProgressText').textContent = `RTLS: ${data.processedCount} / ${data.totalSessionEvents} (${pct}%)`;
+        }
+
+        if (!playing && !document.querySelector('#rtlsStatusIndicator .status-dot').classList.contains('idle')) {
+            const mqttPlaying = !document.querySelector('#statusIndicator .status-dot').classList.contains('idle');
+            setReplayUI(mqttPlaying, false);
         }
     } catch (e) {}
 }
 
+async function loadTrackers() {
+    try {
+        const res = await fetch(`${API}/api/events/trackers`);
+        if (!res.ok) return;
+        const trackers = await res.json();
+        document.getElementById('replayTrackerFilter').innerHTML =
+            '<option value="">-- Все трекеры --</option>' +
+            trackers.map(t => `<option value="${t}">${escHtml(t)}</option>`).join('');
+    } catch (e) {}
+}
+
+async function loadRtlsTrackers() {
+    try {
+        const res = await fetch(`${API}/api/rtls-events/macs`);
+        if (!res.ok) return;
+        const trackers = await res.json();
+        document.getElementById('rtlsReplayTrackerFilter').innerHTML =
+            '<option value="">-- Все трекеры --</option>' +
+            trackers.map(t => `<option value="${t}">${escHtml(t)}</option>`).join('');
+    } catch (e) {}
+}
+
+// ─── Live Events (SignalR) ────────────────────────────────
+const mqttLiveBody = document.getElementById('liveMqttBody');
+const rtlsLiveBody = document.getElementById('liveRtlsBody');
+const MAX_LIVE_ROWS = 100;
+
+function appendLiveRow(tbody, html) {
+    if (tbody.querySelector('.empty-row')) {
+        tbody.innerHTML = '';
+    }
+    const tr = document.createElement('tr');
+    tr.innerHTML = html;
+    tbody.prepend(tr);
+
+    while (tbody.children.length > MAX_LIVE_ROWS) {
+        tbody.removeChild(tbody.lastChild);
+    }
+}
+
+let connection;
+if (typeof signalR !== 'undefined') {
+    connection = new signalR.HubConnectionBuilder()
+        .withUrl("/api/live-events")
+        .withAutomaticReconnect()
+        .build();
+
+    connection.on("ReceiveMqttEvent", (event) => {
+        const html = `
+            <td>${fmt(event.receivedAt)}</td>
+            <td><span class="topic-badge">${escHtml(event.topic)}</span></td>
+            <td>${escHtml(event.trackerId || '—')}</td>
+        `;
+        appendLiveRow(mqttLiveBody, html);
+    });
+
+    connection.on("ReceiveRtlsEvent", (event) => {
+        const html = `
+            <td>${fmt(event.receivedAt)}</td>
+            <td><span class="topic-badge">${escHtml(event.macAddress)}</span></td>
+        `;
+        appendLiveRow(rtlsLiveBody, html);
+    });
+}
+
+async function startSignalR() {
+    if (!connection) return;
+    try {
+        await connection.start();
+        console.log("SignalR Connected.");
+    } catch (err) {
+        console.error("SignalR Connection Error: ", err);
+        setTimeout(startSignalR, 5000);
+    }
+}
+
 // ─── Init ─────────────────────────────────────────────────
-loadSettings();
-initDefaultDates();
-setInterval(pollStatus, 2000);
+function initAll() {
+    loadSettings();
+    initDefaultDates();
+    loadTrackers();
+    loadRtlsTrackers();
+    startSignalR();
+    setInterval(pollStatus, 2000);
+    setInterval(pollRtlsStatus, 2000);
+
+    // Restore tab after a small delay to ensure all DOM state is stable
+    setTimeout(() => {
+        let savedTab = localStorage.getItem('activeTab');
+        // Migrate legacy key: rtls-replay tab was merged into replay
+        if (savedTab === 'rtls-replay') {
+            savedTab = 'replay';
+            localStorage.setItem('activeTab', 'replay');
+        }
+        if (savedTab) {
+            const btn = document.querySelector(`.nav-item[data-tab="${savedTab}"]`);
+            if (btn) {
+                btn.click();
+            }
+        }
+    }, 100);
+}
+
+initAll();

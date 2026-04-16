@@ -2,6 +2,9 @@ using DataReplayer.BackgroundJobs;
 using DataReplayer.Domain.Entities;
 using DataReplayer.Infrastructure.Persistence;
 using DataReplayer.Services;
+
+using MassTransit;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -26,8 +29,35 @@ builder.Services.AddScoped<ISettingsService, SettingsService>();
 builder.Services.AddSingleton<ReplayService>();
 builder.Services.AddSingleton<IReplayService>(sp => sp.GetRequiredService<ReplayService>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ReplayService>());
+
+builder.Services.AddSingleton<RtlsReplayService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<RtlsReplayService>());
 builder.Services.AddHostedService<MqttRecordingService>();
 builder.Services.AddHostedService<DataCleanupService>();
+builder.Services.AddHostedService<WebSocketRecordingService>();
+
+builder.Services.AddMassTransit(x =>
+{
+    x.UsingRabbitMq((ctx, cfg) =>
+    {
+        var rabbit = builder.Configuration.GetSection("RabbitMq");
+        var portStr = rabbit["Port"];
+        ushort port = ushort.TryParse(portStr, out var p) ? p : (ushort)5672;
+
+        cfg.Host(
+            rabbit["Host"] ?? "localhost",
+            port,
+            rabbit["VirtualHost"] ?? "/",
+            h =>
+            {
+                h.Username(rabbit["Username"] ?? "guest");
+                h.Password(rabbit["Password"] ?? "guest");
+            });
+    });
+});
+
+
+builder.Services.AddSignalR();
 
 var app = builder.Build();
 
@@ -102,6 +132,52 @@ app.MapGet("/api/replay/status", (IReplayService replay) =>
     })
 ).WithName("GetReplayStatus").WithTags("Replay");
 
+// ─── RTLS Replay endpoints ───────────────────────────────────────────────
+app.MapPost("/api/rtls-replay/start", async (RtlsReplaySessionCommand cmd, RtlsReplayService replay) =>
+{
+    await replay.StartSessionAsync(cmd);
+    return Results.Ok();
+}).WithName("StartRtlsReplay").WithTags("RtlsReplay");
+
+app.MapPost("/api/rtls-replay/stop", (RtlsReplayService replay) =>
+{
+    replay.StopSessionAsync();
+    return Results.Ok();
+}).WithName("StopRtlsReplay").WithTags("RtlsReplay");
+
+app.MapGet("/api/rtls-replay/status", (RtlsReplayService replay) =>
+    Results.Ok(new
+    {
+        isPlaying = replay.IsPlaying,
+        processedCount = replay.ProcessedCount,
+        totalSessionEvents = replay.TotalSessionEvents
+    })
+).WithName("GetRtlsReplayStatus").WithTags("RtlsReplay");
+
+app.MapGet("/api/rtls-events/macs", async (ReplayerDbContext ctx) =>
+{
+    var macs = await ctx.RecordedRtlsEvents
+        .Select(e => e.UwbMacAddress)
+        .Distinct()
+        .ToListAsync();
+    return Results.Ok(macs);
+}).WithName("GetRtlsMacs").WithTags("RtlsEvents");
+
+app.MapHub<LiveEventsHub>("/api/live-events");
+
+// ─── Debug/Test endpoints ────────────────────────────────────────────────
+app.MapPost("/api/debug/rtls-test", async (string? mac, IHubContext<LiveEventsHub> hub) =>
+{
+    var m = mac ?? "DE:AD:BE:EF:00:01";
+    await hub.Clients.All.SendAsync("ReceiveRtlsEvent", new
+    {
+        receivedAt = DateTime.UtcNow,
+        macAddress = m,
+        payload = "{\"debug\": true, \"address\": \"" + m + "\"}"
+    });
+    return Results.Ok(new { message = "Test RTLS event sent to SignalR clients", mac = m });
+}).WithName("TestRtlsEvent").WithTags("Debug");
+
 // ─── Run ─────────────────────────────────────────────────────────────────
 // Ensure DB is created and seed default settings BEFORE hosted services start
 using (var scope = app.Services.CreateScope())
@@ -109,9 +185,19 @@ using (var scope = app.Services.CreateScope())
     var ctx = scope.ServiceProvider.GetRequiredService<ReplayerDbContext>();
     await ctx.Database.EnsureCreatedAsync();
 
+    // Apply schema changes that EnsureCreatedAsync won't pick up on existing DBs
+    await ctx.Database.ExecuteSqlRawAsync("""
+        ALTER TABLE "Settings"
+            ADD COLUMN IF NOT EXISTS "RtlsWebSocketUrl"          TEXT    NOT NULL DEFAULT 'ws://localhost:8080/feeds/',
+            ADD COLUMN IF NOT EXISTS "IsRtlsRecordingEnabled"    BOOLEAN NOT NULL DEFAULT FALSE;
+        """);
+
     // Seed default settings row so background services don't race to create it
     if (!await ctx.Settings.AnyAsync())
     {
+        var mqttCfg  = app.Configuration.GetSection("Mqtt");
+        var rtlsCfg  = app.Configuration.GetSection("Rtls");
+
         ctx.Settings.Add(new ReplayerSettings());
         await ctx.SaveChangesAsync();
     }

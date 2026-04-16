@@ -12,9 +12,6 @@ public class ReplayerSettings
     // Example: "BADGE/9F31510F9918CE60/up/pressure" → index 1
     public int TrackerIdTopicSegmentIndex { get; set; } = 1;
 
-    // MQTT broker connection
-    public string MqttBrokerHost { get; set; } = "localhost";
-    public int MqttBrokerPort { get; set; } = 1883;
-    public string? MqttUsername { get; set; }
-    public string? MqttPassword { get; set; }
+    // RTLS recording toggle (connection is in appsettings.json)
+    public bool IsRtlsRecordingEnabled { get; set; } = false;
 }

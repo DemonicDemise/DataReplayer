@@ -13,6 +13,7 @@ public class ReplaySessionCommand
     public double SpeedMultiplier { get; set; } = 1.0;
     public string TimestampJsonPath { get; set; } = ReplayService.TimestampPath;
     public List<string>? TrackerFilter { get; set; }
+    public string? TargetTrackerId { get; set; }
 }
 
 public interface IReplayService
@@ -138,28 +139,39 @@ public class ReplayService : BackgroundService, IReplayService
             // Adjust timestamp in payload
             var finalPayload = AdjustTimestamp(evt.Payload, cmd.TimestampJsonPath, DateTime.UtcNow);
 
+            var finalTopic = evt.Endpoint;
+            if (!string.IsNullOrWhiteSpace(cmd.TargetTrackerId))
+            {
+                var segments = finalTopic.Split('/');
+                if (segments.Length > 1)
+                {
+                    segments[1] = cmd.TargetTrackerId;
+                    finalTopic = string.Join('/', segments);
+                }
+            }
+
             _logger.LogDebug(
                 "[Replay] Preparing to publish:\n" +
                 "  Topic   : {Topic}\n" +
                 "  Original: {Original}\n" +
                 "  Modified: {Modified}",
-                evt.Endpoint, evt.Payload, finalPayload);
+                finalTopic, evt.Payload, finalPayload);
 
             // Publish to MQTT
             if (_mqttClient is null)
             {
                 _logger.LogWarning("[Replay] MQTT client is null — skipping event {Sent}/{Total} on topic {Topic}",
-                    Progress.Sent + 1, Progress.Total, evt.Endpoint);
+                    Progress.Sent + 1, Progress.Total, finalTopic);
             }
             else if (!_mqttClient.IsConnected)
             {
                 _logger.LogWarning("[Replay] MQTT client is NOT connected — skipping event {Sent}/{Total} on topic {Topic}",
-                    Progress.Sent + 1, Progress.Total, evt.Endpoint);
+                    Progress.Sent + 1, Progress.Total, finalTopic);
             }
             else
             {
                 var msg = new MqttApplicationMessageBuilder()
-                    .WithTopic(evt.Endpoint)
+                    .WithTopic(finalTopic)
                     .WithPayload(finalPayload)
                     .Build();
 
@@ -167,15 +179,15 @@ public class ReplayService : BackgroundService, IReplayService
                     "[Replay] Publishing event {Sent}/{Total}:\n" +
                     "  Topic  : {Topic}\n" +
                     "  Payload: {Payload}",
-                    Progress.Sent + 1, Progress.Total, evt.Endpoint, finalPayload);
+                    Progress.Sent + 1, Progress.Total, finalTopic, finalPayload);
 
                 await _mqttClient.PublishAsync(msg, sessionToken);
 
-                _logger.LogInformation("[Replay] Published OK → {Topic}", evt.Endpoint);
+                _logger.LogInformation("[Replay] Published OK → {Topic}", finalTopic);
             }
 
             Progress.Sent++;
-            Progress.CurrentTopic = evt.Endpoint;
+            Progress.CurrentTopic = finalTopic;
             Progress.CurrentEventTime = evt.ReceivedAt;
         }
 
@@ -193,14 +205,21 @@ public class ReplayService : BackgroundService, IReplayService
         var settingsSvc = scope.ServiceProvider.GetRequiredService<ISettingsService>();
         var settings = await settingsSvc.GetSettingsAsync();
 
-        var optsBuilder = new MqttClientOptionsBuilder()
-            .WithTcpServer(settings.MqttBrokerHost, settings.MqttBrokerPort);
+        var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var mqttCfg = config.GetSection("Mqtt");
+        var host = mqttCfg["Host"] ?? "localhost";
+        var port = int.TryParse(mqttCfg["Port"], out var p) ? p : 1883;
 
-        if (!string.IsNullOrEmpty(settings.MqttUsername))
-            optsBuilder.WithCredentials(settings.MqttUsername, settings.MqttPassword);
+        var optsBuilder = new MqttClientOptionsBuilder()
+            .WithTcpServer(host, port);
+
+        var user = mqttCfg["Username"];
+        var pass = mqttCfg["Password"];
+        if (!string.IsNullOrEmpty(user))
+            optsBuilder.WithCredentials(user, pass);
 
         try { await _mqttClient.ConnectAsync(optsBuilder.Build()); }
-        catch (Exception ex) { _logger.LogError(ex, "Replay: failed to connect to MQTT broker"); }
+        catch (Exception ex) { _logger.LogError(ex, "Replay: failed to connect to MQTT broker {Host}:{Port}", host, port); }
     }
 
     private string AdjustTimestamp(string payload, string jsonPath, DateTime newValue)

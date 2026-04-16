@@ -2,6 +2,7 @@ using System.Text;
 using DataReplayer.Domain.Entities;
 using DataReplayer.Infrastructure.Persistence;
 using DataReplayer.Services;
+using Microsoft.AspNetCore.SignalR;
 using MQTTnet;
 using MQTTnet.Client;
 
@@ -51,14 +52,21 @@ public class MqttRecordingService : BackgroundService
             var settingsSvc = scope.ServiceProvider.GetRequiredService<ISettingsService>();
             var settings = await settingsSvc.GetSettingsAsync(ct);
 
-            var optionsBuilder = new MqttClientOptionsBuilder()
-                .WithTcpServer(settings.MqttBrokerHost, settings.MqttBrokerPort);
+            var config = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+            var mqttCfg = config.GetSection("Mqtt");
+            var host = mqttCfg["Host"] ?? "localhost";
+            var port = int.TryParse(mqttCfg["Port"], out var p) ? p : 1883;
 
-            if (!string.IsNullOrEmpty(settings.MqttUsername))
-                optionsBuilder.WithCredentials(settings.MqttUsername, settings.MqttPassword);
+            var optionsBuilder = new MqttClientOptionsBuilder()
+                .WithTcpServer(host, port);
+
+            var user = mqttCfg["Username"];
+            var pass = mqttCfg["Password"];
+            if (!string.IsNullOrEmpty(user))
+                optionsBuilder.WithCredentials(user, pass);
 
             await _client!.ConnectAsync(optionsBuilder.Build(), ct);
-            _logger.LogInformation("Connected to MQTT broker {Host}:{Port}", settings.MqttBrokerHost, settings.MqttBrokerPort);
+            _logger.LogInformation("Connected to MQTT broker {Host}:{Port}", host, port);
             await SubscribeTopicsAsync();
         }
         catch (Exception ex)
@@ -110,13 +118,23 @@ public class MqttRecordingService : BackgroundService
         }
 
         var ctx = scope.ServiceProvider.GetRequiredService<ReplayerDbContext>();
-        ctx.RecordedEvents.Add(new RecordedDataEvent
+        var @event = new RecordedDataEvent
         {
             ReceivedAt = DateTime.UtcNow,
             Endpoint = topic,
             Payload = payload,
             TrackerId = extractedTrackerId
-        });
+        };
+        ctx.RecordedEvents.Add(@event);
         await ctx.SaveChangesAsync(ct);
+
+        var hubCtx = scope.ServiceProvider.GetRequiredService<IHubContext<LiveEventsHub>>();
+        await hubCtx.Clients.All.SendAsync("ReceiveMqttEvent", new
+        {
+            receivedAt = @event.ReceivedAt,
+            topic = @event.Endpoint,
+            trackerId = @event.TrackerId ?? "",
+            payload = @event.Payload
+        }, ct);
     }
 }
