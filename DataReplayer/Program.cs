@@ -40,6 +40,9 @@ builder.Services.AddMassTransit(x =>
 {
     x.UsingRabbitMq((ctx, cfg) =>
     {
+        cfg.Publish<DMMS.Positioning.Contracts.TrackerRegistrations.Origin.Abstractions.IRtlsPreciseRegistrationOrigin>(p => p.ExchangeType = "headers");
+        cfg.Publish<DMMS.Positioning.Contracts.TrackerRegistrations.Origin.Abstractions.IRegistrationOrigin>(p => p.ExchangeType = "headers");
+        
         var rabbit = builder.Configuration.GetSection("RabbitMq");
         var portStr = rabbit["Port"];
         ushort port = ushort.TryParse(portStr, out var p) ? p : (ushort)5672;

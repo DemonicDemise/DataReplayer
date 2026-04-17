@@ -341,6 +341,16 @@ function setReplayUI(mqttPlaying, rtlsPlaying) {
     playBtn.disabled = anyPlaying;
     stopBtn.disabled = !anyPlaying;
 
+    // Disable form inputs during replay
+    const inputsToDisable = ['replayStart', 'replayEnd', 'commonReplayTargetTracker', 'commonReplayTrackerFilter'];
+    inputsToDisable.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = anyPlaying;
+    });
+    document.querySelectorAll('#speedButtons .speed-btn').forEach(btn => {
+        btn.disabled = anyPlaying;
+    });
+
     // MQTT status
     const mqttDot   = document.querySelector('#statusIndicator .status-dot');
     const mqttLabel = document.getElementById('statusLabel');

@@ -6,10 +6,8 @@ using DMMS.InfrastructureMonitor.Contracts.IntegrationsEvents.V1;
 using DMMS.InfrastructureMonitor.Contracts.Models;
 using DMMS.Positioning.Contracts.Constants;
 using DMMS.Positioning.Contracts.IntegrationEvents.V1.TrackerRegistrations.Origin;
-using DMMS.Positioning.Contracts.TrackerRegistrations.Origin;
 using DMMS.ResourceManagement.Contracts.Constants;
 using DMMS.ResourceManagement.Contracts.Enums;
-
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 
@@ -193,8 +191,24 @@ public class RtlsReplayService : BackgroundService
                 Origin = RegistrationOrigins.Rtls,
                 CalibratedPressure = pressure
             };
+            // Calculate ShardKey
+            var config = _sp.GetRequiredService<IConfiguration>();
+            var maxShards = config.GetValue<int>("ShardedPublishOptions:MaxShardsCount", 12);
+            int shardKey = 0;
+            if (maxShards > 0)
+            {
+                using var md5 = System.Security.Cryptography.MD5.Create();
+                var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(nativeId));
+                shardKey = Math.Abs(BitConverter.ToInt32(hash, 0)) % maxShards;
+            }
+
+            _logger.LogInformation("[RTLS Replay] Публикация RtlsPrecisePositionReadEvent: TrackerId={TrackerId}, Reader={ReaderId}, Point=[{X:F2}, {Y:F2}, {Z:F2}], ShardKey={ShardKey}",
+                posEvent.TrackerId, posEvent.ReaderId, posX, posY, posZ, shardKey);
             
-            await publisher.Publish(posEvent, ct);
+            await publisher.Publish(posEvent, publishCtx => 
+            {
+                publishCtx.Headers.Set("ShardKey", shardKey);
+            }, ct);
 
             // 2. Monitoring indicator for Tracker (LastActivityTime)
             var trackerIndicator = new DeviceIndicatorValuePacketEvent
@@ -212,6 +226,9 @@ public class RtlsReplayService : BackgroundService
                     }
                 }
             };
+            
+            _logger.LogInformation("[RTLS Replay] Публикация DeviceIndicatorValuePacketEvent: NativeId={NativeId}, Code={Code}, Value={Value}",
+                trackerIndicator.NativeId, IndicatorTypes.LastActivityTime, masterReader);
             await publisher.Publish(trackerIndicator, ct);
 
             // We can also extract Slaves to simulate Anchor DeviceIndicatorValuePacketEvent but that requires parsing "readersInfo/slaves".
